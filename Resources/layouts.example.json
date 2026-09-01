@@ -1,0 +1,39 @@
+{
+  "layouts": [
+    {
+      "displayIdentities": [
+        {
+          "model": 1,
+          "serial": 1,
+          "uuid": "00000000-0000-0000-0000-000000000001",
+          "vendor": 1
+        }
+      ],
+      "screens": [
+        {
+          "h": 1080,
+          "w": 1920,
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "title": "Desk",
+      "windows": [
+        {
+          "appName": "Terminal",
+          "bundleID": "com.apple.Terminal",
+          "frame": {
+            "h": 700,
+            "w": 1100,
+            "x": 80,
+            "y": 120
+          },
+          "subrole": "AXStandardWindow",
+          "title": "Terminal"
+        }
+      ]
+    }
+  ],
+  "updatedAt": "2026-01-01T00:00:00Z",
+  "version": 2
+}

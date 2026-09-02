@@ -29,6 +29,8 @@ cd window-layout
 
 The installer builds both executables, installs the CLI at `~/.local/bin/window-layout`, creates `~/Applications/Window Layout.app`, and preserves an existing layout configuration.
 
+On the first install, the script asks to create and trust a self-signed **Window Layout Local Code Signing** root certificate and private key in your login keychain. This identity stays on your Mac and gives application updates a stable code identity, allowing macOS to remember Accessibility permission. The private key is never added to the repository or transmitted anywhere.
+
 Open the menu bar app later with:
 
 ```sh
@@ -84,6 +86,20 @@ window-layout diagnose-app com.google.Chrome
 
 If every normal Chrome process reports `axError=-25211`, quit and reopen Chrome. Window Layout reports this state as `accessibility unavailable` rather than incorrectly saying Chrome is not running.
 
+## Accessibility Permission Keeps Resetting
+
+macOS stores privacy permissions against an application's code-signing designated requirement. Ad-hoc signatures use the exact executable hash, so rebuilding an ad-hoc-signed app makes it a different application to macOS even when its name and path are unchanged.
+
+The installer avoids this by creating and reusing a trusted local Code Signing identity, then registering the installed app with Launch Services. Verify an installed build with:
+
+```sh
+codesign -d -r- "$HOME/Applications/Window Layout.app"
+```
+
+The result should contain the bundle identifier and a certificate hash. It must not be only `designated => cdhash ...`.
+
+To deliberately use ad-hoc signing instead, set `WINDOW_LAYOUT_SIGNING_IDENTITY=-` while installing. Accessibility permission may need to be granted again after every update.
+
 ## Privacy
 
 Window titles can contain private project names, document names, or URLs. The repository does not include user layout files. `Resources/layouts.example.json` contains only synthetic data.
@@ -93,6 +109,12 @@ Window titles can contain private project names, document names, or URLs. The re
 ```sh
 swift build
 swift test
+```
+
+The local-signing installer path has a separate macOS integration test. It creates and removes a temporary keychain and installs only into a temporary home directory:
+
+```sh
+make test-signing
 ```
 
 The project contains three Swift targets:
@@ -108,6 +130,8 @@ The project contains three Swift targets:
 ```
 
 Saved layouts are retained by default. Use `./scripts/uninstall.sh --purge` to remove them as well.
+
+The local signing identity is retained so reinstalling the app keeps the same identity. Remove it separately in Keychain Access only when you no longer plan to use Window Layout.
 
 ## License
 

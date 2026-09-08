@@ -17,6 +17,7 @@ struct LiveWindow {
     var subrole: String
     var frame: Rect
     var element: AXUIElement
+    var identity: WindowIdentity?
 }
 
 struct LiveWindowSnapshot {
@@ -409,6 +410,7 @@ func axWindows(_ appElement: AXUIElement) -> (error: AXError, windows: [AXUIElem
 
 func liveWindows() -> LiveWindowSnapshot {
     var result = LiveWindowSnapshot()
+    let windowInfo = systemWindows()
     for app in NSWorkspace.shared.runningApplications {
         guard let bundleID = app.bundleIdentifier else { continue }
         let key = bundleKey(bundleID)
@@ -433,7 +435,8 @@ func liveWindows() -> LiveWindowSnapshot {
                 title: title,
                 subrole: subrole,
                 frame: frame,
-                element: window
+                element: window,
+                identity: windowIdentity(app: app, frame: frame, windows: windowInfo)
             ))
         }
     }
@@ -441,6 +444,7 @@ func liveWindows() -> LiveWindowSnapshot {
 }
 
 func diagnoseApp(bundleID wantedBundleID: String) {
+    let windowInfo = systemWindows()
     let apps = NSWorkspace.shared.runningApplications.filter {
         bundleKey($0.bundleIdentifier ?? "") == bundleKey(wantedBundleID)
     }
@@ -455,7 +459,8 @@ func diagnoseApp(bundleID wantedBundleID: String) {
             let minimized = axBool(window, kAXMinimizedAttribute)
             let frame = axFrame(window)
             let frameText = frame.map { "\(Int($0.x)),\(Int($0.y)) \(Int($0.w))x\(Int($0.h))" } ?? "unavailable"
-            print("  [\(index)] subrole=\(subrole) minimized=\(minimized) frame=\(frameText) title=\(axString(window, kAXTitleAttribute))")
+            let id = frame.flatMap { windowIdentity(app: app, frame: $0, windows: windowInfo) }
+            print("  [\(index)] windowID=\(id.map { String($0.windowID) } ?? "unavailable") subrole=\(subrole) minimized=\(minimized) frame=\(frameText) title=\(axString(window, kAXTitleAttribute))")
         }
     }
 }
@@ -519,10 +524,20 @@ func apply(_ layout: Layout, dryRun: Bool) {
         : mappedDisplays.map(\.frame)
     let saved = runnableSavedWindows(layout)
     let snapshot = liveWindows()
-    var used: [String: Set<Int>] = [:]
+    var planned: [Int: LiveWindow] = [:]
+    for key in Set(saved.map { bundleKey($0.bundleID) }) {
+        let indices = saved.indices.filter { bundleKey(saved[$0].bundleID) == key }
+        let live = snapshot.windows[key] ?? []
+        let strict = key == "com.google.chrome" || key.hasPrefix("com.google.chrome.")
+        let matches = matchWindows(
+            saved: indices.map { WindowCandidate(title: saved[$0].title, identity: saved[$0].identity) },
+            live: live.map { WindowCandidate(title: $0.title, identity: $0.identity) }, strict: strict)
+        for (source, target) in matches { planned[indices[source]] = live[target] }
+    }
     var moved = 0
+    var refreshedLayout = layout
 
-    for savedWindow in saved {
+    for (savedIndex, savedWindow) in saved.enumerated() {
         guard let frame = targetFrame(savedWindow: savedWindow, savedScreens: layout.screens, targetScreens: targetScreens) else {
             print("skip \(savedWindow.appName): no matching display")
             continue
@@ -541,24 +556,23 @@ func apply(_ layout: Layout, dryRun: Bool) {
             continue
         }
 
-        let alreadyUsed = used[key, default: []]
-        let available = live.enumerated().filter { !alreadyUsed.contains($0.offset) }
-        guard let best = available.max(by: {
-            titleScore(saved: savedWindow.title, live: $0.element.title) <
-            titleScore(saved: savedWindow.title, live: $1.element.title)
-        }) ?? available.first else {
-            print("skip \(savedWindow.appName): no unused window")
+        guard let liveWindow = planned[savedIndex] else {
+            print("skip \(savedWindow.appName): ambiguous or missing window [\(savedWindow.title)]")
             continue
         }
-
-        used[key, default: []].insert(best.offset)
-        let liveWindow = best.element
-        let line = "\(savedWindow.appName) -> \(Int(frame.x)),\(Int(frame.y)) \(Int(frame.w))x\(Int(frame.h)) [\(liveWindow.title)]"
+        let reason = savedWindow.identity != nil && savedWindow.identity == liveWindow.identity ? "window identity" : "title"
+        let line = "\(savedWindow.appName) -> \(Int(frame.x)),\(Int(frame.y)) \(Int(frame.w))x\(Int(frame.h)) [\(liveWindow.title)] (\(reason))"
         if dryRun {
             print("would move " + line)
         } else if setFrame(frame, on: liveWindow.element) {
             moved += 1
             print("moved " + line)
+            if (key == "com.google.chrome" || key.hasPrefix("com.google.chrome.")),
+               liveWindow.identity != nil,
+               let originalIndex = layout.windows.firstIndex(of: savedWindow) {
+                refreshedLayout.windows[originalIndex].identity = liveWindow.identity
+                refreshedLayout.windows[originalIndex].title = liveWindow.title
+            }
         } else {
             print("failed " + line)
         }
@@ -566,6 +580,18 @@ func apply(_ layout: Layout, dryRun: Bool) {
 
     if !dryRun {
         print("moved \(moved) window(s)")
+        if refreshedLayout != layout {
+            do {
+                var store = try loadStore()
+                // Do not overwrite a layout updated by another invocation during apply.
+                if store.layouts.first(where: { $0.title == layout.title }) == layout {
+                    upsert(refreshedLayout, into: &store)
+                    try saveStore(store)
+                }
+            } catch {
+                print("warning: could not remember matched window identities: \(error.localizedDescription)")
+            }
+        }
     }
 }
 
@@ -583,7 +609,8 @@ func saveCurrentLayout(named name: String) throws {
             bundleID: live.bundleID,
             title: live.title,
             subrole: live.subrole,
-            frame: savedFrame(fromAXFrame: live.frame, display: display.frame)
+            frame: savedFrame(fromAXFrame: live.frame, display: display.frame),
+            identity: live.identity
         )
     }
 

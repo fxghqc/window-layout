@@ -20,13 +20,15 @@ public struct SavedWindow: Codable, Equatable, Sendable {
     public var title: String
     public var subrole: String
     public var frame: Rect
+    public var identity: WindowIdentity?
 
-    public init(appName: String, bundleID: String, title: String, subrole: String, frame: Rect) {
+    public init(appName: String, bundleID: String, title: String, subrole: String, frame: Rect, identity: WindowIdentity? = nil) {
         self.appName = appName
         self.bundleID = bundleID
         self.title = title
         self.subrole = subrole
         self.frame = frame
+        self.identity = identity
     }
 }
 
@@ -110,7 +112,7 @@ public func targetFrame(savedWindow: SavedWindow, savedScreens: [Rect], targetSc
 public func titleScore(saved: String, live: String) -> Int {
     let savedTitle = saved.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     let liveTitle = live.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if savedTitle.isEmpty { return 0 }
+    if savedTitle.isEmpty || liveTitle.isEmpty { return 0 }
     if savedTitle == liveTitle { return 100 }
     if liveTitle.contains(savedTitle) || savedTitle.contains(liveTitle) { return 75 }
     let savedWords = Set(savedTitle.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))

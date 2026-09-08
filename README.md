@@ -100,6 +100,18 @@ The result should contain the bundle identifier and a certificate hash. It must 
 
 To deliberately use ad-hoc signing instead, set `WINDOW_LAYOUT_SIGNING_IDENTITY=-` while installing. Accessibility permission may need to be granted again after every update.
 
+## Chrome Window Matching
+
+Saved windows now include a window ID scoped to the application's PID and launch time. While Chrome stays running, switching tabs, changing window order, and reconnecting displays do not change the assignment. IDs from a previous Chrome process are not reused after restart.
+
+For old layouts and restarted Chrome sessions, only unique normalized titles are accepted. Chrome's changing English memory-usage decoration is ignored; profile names are preserved. Ambiguous, duplicate, or unrelated titles are skipped instead of assigned arbitrarily. Successfully restored Chrome windows refresh their identity and title without changing saved positions.
+
+For existing layouts, put the windows in their intended positions and update each layout once to record identities. If windows must remain recognizable across Chrome restarts and tab changes, give them distinct names using Chrome's **Name window** command before saving. Window IDs cannot recover the intent of an old layout whose tab titles have all changed.
+
+The ID collector uses public Core Graphics window metadata and Accessibility frames. It accepts a unique bounds match within the owning process; if metadata is unavailable or identical windows overlap, it leaves the identity unset and uses conservative title matching.
+
+Run `bash Tests/ChromeMatchingLive.sh /path/to/window-layout` with multiple Chrome windows open to exercise save and dry-run apply using changed titles and reversed order in a private temporary configuration. It does not move windows or modify your layouts.
+
 ## Privacy
 
 Window titles can contain private project names, document names, or URLs. The repository does not include user layout files. `Resources/layouts.example.json` contains only synthetic data.

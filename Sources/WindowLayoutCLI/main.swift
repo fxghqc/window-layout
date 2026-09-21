@@ -297,11 +297,17 @@ func restoreDisplayArrangement(layout: Layout, mapped: [ActiveDisplay], dryRun: 
         return false
     }
 
+    var stableSamples = 0
     for _ in 0..<30 {
         if let refreshed = mapDisplays(layout: layout, current: currentDisplays()),
            topologyMatches(layout: layout, mapped: refreshed) {
-            print("restored display arrangement for \(layout.title)")
-            return true
+            stableSamples += 1
+            if stableSamples >= 5 {
+                print("restored display arrangement for \(layout.title)")
+                return true
+            }
+        } else {
+            stableSamples = 0
         }
         Thread.sleep(forTimeInterval: 0.1)
     }
@@ -470,8 +476,9 @@ func allLiveWindows() -> [LiveWindow] {
 }
 
 func setFrame(_ frame: Rect, on window: AXUIElement) -> Bool {
-    var point = CGPoint(x: frame.x.rounded(), y: frame.y.rounded())
-    var size = CGSize(width: max(40, frame.w.rounded()), height: max(30, frame.h.rounded()))
+    let target = normalizedPlacementFrame(frame)
+    var point = CGPoint(x: target.x, y: target.y)
+    var size = CGSize(width: target.w, height: target.h)
     guard let positionValue = AXValueCreate(.cgPoint, &point),
           let sizeValue = AXValueCreate(.cgSize, &size) else { return false }
 
@@ -480,13 +487,20 @@ func setFrame(_ frame: Rect, on window: AXUIElement) -> Bool {
     AXUIElementIsAttributeSettable(window, kAXPositionAttribute as CFString, &canSetPosition)
     AXUIElementIsAttributeSettable(window, kAXSizeAttribute as CFString, &canSetSize)
 
-    let p: AXError = canSetPosition.boolValue
-        ? AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, positionValue)
-        : .failure
-    let s: AXError = canSetSize.boolValue
-        ? AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
-        : .success
-    return p == .success && s == .success
+    guard canSetPosition.boolValue else { return false }
+    return placeWindowFrame(frame, read: { axFrame(window) }, setPosition: { _ in
+        AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, positionValue)
+    }, setSize: { _ in
+        if canSetSize.boolValue {
+            AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+        }
+    }, wait: { Thread.sleep(forTimeInterval: $0) }, resize: canSetSize.boolValue)
+}
+
+func windowAtFrame(_ frame: Rect, window: AXUIElement) -> Bool {
+    var canSetSize = DarwinBoolean(false)
+    guard AXUIElementIsAttributeSettable(window, kAXSizeAttribute as CFString, &canSetSize) == .success else { return false }
+    return placementMatches(axFrame(window), target: frame, resize: canSetSize.boolValue)
 }
 
 func runnableSavedWindows(_ layout: Layout) -> [SavedWindow] {
@@ -536,6 +550,7 @@ func apply(_ layout: Layout, dryRun: Bool) {
     }
     var moved = 0
     var refreshedLayout = layout
+    var applied: [(saved: SavedWindow, live: LiveWindow, frame: Rect, line: String)] = []
 
     for (savedIndex, savedWindow) in saved.enumerated() {
         guard let frame = targetFrame(savedWindow: savedWindow, savedScreens: layout.screens, targetScreens: targetScreens) else {
@@ -564,21 +579,34 @@ func apply(_ layout: Layout, dryRun: Bool) {
         let line = "\(savedWindow.appName) -> \(Int(frame.x)),\(Int(frame.y)) \(Int(frame.w))x\(Int(frame.h)) [\(liveWindow.title)] (\(reason))"
         if dryRun {
             print("would move " + line)
-        } else if setFrame(frame, on: liveWindow.element) {
+        } else {
+            _ = setFrame(frame, on: liveWindow.element)
+            applied.append((savedWindow, liveWindow, frame, line))
+        }
+    }
+
+    if !dryRun {
+        // Display/app layout changes can arrive after earlier windows were placed.
+        // Recheck the original AX elements, never rerun window matching.
+        if !applied.isEmpty { Thread.sleep(forTimeInterval: 0.25) }
+        for item in applied {
+            let liveWindow = item.live
+            let savedWindow = item.saved
+            let key = bundleKey(savedWindow.bundleID)
+            guard windowAtFrame(item.frame, window: liveWindow.element) || setFrame(item.frame, on: liveWindow.element) else {
+                let actual = axFrame(liveWindow.element).map { "\(Int($0.x)),\(Int($0.y)) \(Int($0.w))x\(Int($0.h))" } ?? "unavailable"
+                print("failed to reach target: \(item.line); actual=\(actual)")
+                continue
+            }
             moved += 1
-            print("moved " + line)
+            print("moved " + item.line)
             if (key == "com.google.chrome" || key.hasPrefix("com.google.chrome.")),
                liveWindow.identity != nil,
                let originalIndex = layout.windows.firstIndex(of: savedWindow) {
                 refreshedLayout.windows[originalIndex].identity = liveWindow.identity
                 refreshedLayout.windows[originalIndex].title = liveWindow.title
             }
-        } else {
-            print("failed " + line)
         }
-    }
-
-    if !dryRun {
         print("moved \(moved) window(s)")
         if refreshedLayout != layout {
             do {
@@ -591,6 +619,10 @@ func apply(_ layout: Layout, dryRun: Bool) {
             } catch {
                 print("warning: could not remember matched window identities: \(error.localizedDescription)")
             }
+        }
+        if moved < applied.count {
+            print("\(applied.count - moved) window(s) did not reach their target after retries")
+            exit(3)
         }
     }
 }

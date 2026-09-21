@@ -6,6 +6,7 @@ import WindowLayoutCore
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
+    private var isRunning = false
     private let cliPath = NSString(string: "~/.local/bin/window-layout").expandingTildeInPath
     private let layoutsPath = NSString(string: "~/Library/Application Support/window-layout/layouts.json").expandingTildeInPath
 
@@ -20,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.delegate = self
+        menu.autoenablesItems = false
         statusItem.menu = menu
         rebuildMenu()
     }
@@ -37,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuildMenu() {
         menu.removeAllItems()
 
-        let title = NSMenuItem(title: "Window Layout", action: nil, keyEquivalent: "")
+        let title = NSMenuItem(title: isRunning ? "Window Layout (Working...)" : "Window Layout", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
         menu.addItem(.separator())
@@ -51,14 +53,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for layout in layouts {
                 let item = NSMenuItem(title: layout.title, action: nil, keyEquivalent: "")
                 let submenu = NSMenu()
+                submenu.autoenablesItems = false
 
                 let apply = NSMenuItem(title: "Apply", action: #selector(applyLayout(_:)), keyEquivalent: "")
                 apply.target = self
+                apply.isEnabled = !isRunning
                 apply.representedObject = layout.title
                 submenu.addItem(apply)
 
                 let update = NSMenuItem(title: "Update from Current Windows", action: #selector(updateLayout(_:)), keyEquivalent: "")
                 update.target = self
+                update.isEnabled = !isRunning
                 update.representedObject = layout.title
                 submenu.addItem(update)
 
@@ -76,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let add = NSMenuItem(title: "Add New Layout...", action: #selector(addLayout), keyEquivalent: "n")
         add.target = self
+        add.isEnabled = !isRunning
         menu.addItem(add)
 
         let refresh = NSMenuItem(title: "Refresh", action: #selector(refreshMenu), keyEquivalent: "r")
@@ -148,9 +154,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func run(_ arguments: [String], successTitle: String) {
+        guard !isRunning else { return }
+        isRunning = true
+        rebuildMenu()
         DispatchQueue.global(qos: .userInitiated).async {
             let result = self.runCLI(arguments)
             DispatchQueue.main.async {
+                self.isRunning = false
+                self.rebuildMenu()
                 if result.status == 0 {
                     self.showAlert(title: successTitle, text: result.output)
                 } else {

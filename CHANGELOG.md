@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Verify actual window frames after resize/move, retry boundedly on the same window, and recheck the full batch before reporting success.
+- Wait for consecutive matching display topology samples and prevent overlapping menu bar operations.
+- Report windows that remain constrained or unresponsive as failures instead of claiming the layout was applied.
+
 - Preserve Chrome window assignments through tab changes using process-scoped window IDs.
 - Plan matches before moving windows; reserve unique titles and skip ambiguous Chrome matches instead of guessing.
 - Ignore Chrome's changing memory-usage title decoration and retain profile suffixes.

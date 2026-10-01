@@ -34,13 +34,15 @@ Usage:
   window-layout inspect <layout-name>
   window-layout check <layout-name>
   window-layout arrange <layout-name> [--dry-run]
-  window-layout apply <layout-name> [--dry-run]
+  window-layout apply <layout-name> [--current-displays] [--dry-run]
   window-layout save <layout-name>
   window-layout import-moom <layout-name>...
 
 Layouts are stored in ~/Library/Application Support/window-layout/layouts.json.
 Moom is only used by import-moom, so normal save/apply/list/inspect do not
 depend on Moom.
+Use --current-displays to adapt windows to a different display set with the same
+screen count, preserving the current arrangement and the saved layout.
 """
 
 func toolDirectory() -> URL {
@@ -177,16 +179,6 @@ func containingDisplay(for frame: Rect, displays: [ActiveDisplay]) -> ActiveDisp
     } ?? displays.first
 }
 
-func identityMatchScore(saved: DisplayIdentity, current: DisplayIdentity) -> Int? {
-    if saved.uuid.caseInsensitiveCompare(current.uuid) == .orderedSame { return 10_000 }
-    if saved.serial != 0,
-       saved.vendor == current.vendor,
-       saved.model == current.model,
-       saved.serial == current.serial { return 1_000 }
-    if saved.vendor == current.vendor && saved.model == current.model { return 100 }
-    return nil
-}
-
 func legacyMatchScore(saved: Rect, current: Rect) -> Double {
     abs(current.w - saved.w) * 20 +
     abs(current.h - saved.h) * 20 +
@@ -230,7 +222,7 @@ func mapDisplays(layout: Layout, current: [ActiveDisplay]) -> [ActiveDisplay]? {
     for identity in identities {
         let candidates = current.indices.compactMap { index -> (Int, Int)? in
             guard !used.contains(index),
-                  let score = identityMatchScore(saved: identity, current: current[index].identity) else { return nil }
+                  let score = displayIdentityMatchScore(saved: identity, current: current[index].identity) else { return nil }
             return (index, score)
         }
         guard let best = candidates.max(by: { $0.1 < $1.1 }) else { return nil }
@@ -510,32 +502,48 @@ func runnableSavedWindows(_ layout: Layout) -> [SavedWindow] {
     }
 }
 
-func apply(_ layout: Layout, dryRun: Bool) {
+func apply(_ layout: Layout, dryRun: Bool, useCurrentDisplays: Bool) {
     guard AXIsProcessTrusted() else {
         print("Accessibility permission is not granted for this process.")
         exit(2)
     }
 
-    var displays = currentDisplays()
-    guard var mappedDisplays = mapDisplays(layout: layout, current: displays) else {
-        print("connected displays do not match \(layout.title)")
-        return
+    let displays = currentDisplays()
+    guard !displays.isEmpty else {
+        print("No active displays available. Wake and unlock the desktop, then retry.")
+        exit(1)
     }
-    guard restoreDisplayArrangement(layout: layout, mapped: mappedDisplays, dryRun: dryRun) else {
-        return
-    }
-    if !dryRun, layout.displayIdentities?.count == layout.screens.count {
-        displays = currentDisplays()
-        guard let refreshed = mapDisplays(layout: layout, current: displays) else {
-            print("could not rematch displays after restoring arrangement")
-            return
+    let targetScreens: [Rect]
+    if useCurrentDisplays {
+        guard let indices = compatibleDisplayMapping(layout: layout, currentScreens: displays.map(\.frame),
+            currentIdentities: displays.map(\.identity)) else {
+            print("cannot adapt \(layout.title): saved \(layout.screens.count) screen(s), connected \(displays.count); equal counts and valid display geometry required")
+            exit(1)
         }
-        mappedDisplays = refreshed
+        targetScreens = indices.map { displays[$0].frame }
+        print("adapting \(layout.title) to current displays; arrangement and saved layout unchanged")
+        for (savedIndex, currentIndex) in indices.enumerated() {
+            let active = displays[currentIndex]
+            print("mapped saved screen \(savedIndex + 1) -> display \(shortUUID(active.identity.uuid)) \(Int(active.frame.x)),\(Int(active.frame.y)) \(Int(active.frame.w))x\(Int(active.frame.h))")
+        }
+    } else {
+        guard var mappedDisplays = mapDisplays(layout: layout, current: displays) else {
+            print("connected displays do not match \(layout.title)")
+            print("Use --current-displays to adapt windows without changing the current display arrangement.")
+            exit(1)
+        }
+        guard restoreDisplayArrangement(layout: layout, mapped: mappedDisplays, dryRun: dryRun) else { exit(1) }
+        if !dryRun, layout.displayIdentities?.count == layout.screens.count {
+            guard let refreshed = mapDisplays(layout: layout, current: currentDisplays()) else {
+                print("could not rematch displays after restoring arrangement")
+                exit(1)
+            }
+            mappedDisplays = refreshed
+        }
+        targetScreens = layout.displayIdentities?.count == layout.screens.count
+            ? layout.screens
+            : mappedDisplays.map(\.frame)
     }
-
-    let targetScreens = layout.displayIdentities?.count == layout.screens.count
-        ? layout.screens
-        : mappedDisplays.map(\.frame)
     let saved = runnableSavedWindows(layout)
     let snapshot = liveWindows()
     var planned: [Int: LiveWindow] = [:]
@@ -600,7 +608,7 @@ func apply(_ layout: Layout, dryRun: Bool) {
             }
             moved += 1
             print("moved " + item.line)
-            if (key == "com.google.chrome" || key.hasPrefix("com.google.chrome.")),
+            if !useCurrentDisplays, (key == "com.google.chrome" || key.hasPrefix("com.google.chrome.")),
                liveWindow.identity != nil,
                let originalIndex = layout.windows.firstIndex(of: savedWindow) {
                 refreshedLayout.windows[originalIndex].identity = liveWindow.identity
@@ -634,6 +642,10 @@ func saveCurrentLayout(named name: String) throws {
     }
 
     let displays = currentDisplays()
+    guard !displays.isEmpty else {
+        print("No active displays available. Wake and unlock the desktop, then retry.")
+        exit(1)
+    }
     let windows = allLiveWindows().compactMap { live -> SavedWindow? in
         guard let display = containingDisplay(for: live.frame, displays: displays) else { return nil }
         return SavedWindow(
@@ -738,13 +750,17 @@ do {
     case "apply":
         guard args.count >= 2 else { print(usage); exit(64) }
         let name = args[1]
+        guard args.dropFirst(2).allSatisfy({ $0 == "--dry-run" || $0 == "--current-displays" }) else {
+            print(usage)
+            exit(64)
+        }
         let dryRun = args.contains("--dry-run")
         let store = try loadStore()
         guard let layout = store.layouts.first(where: { $0.title == name }) else {
             print("Layout not found: \(name)")
             exit(1)
         }
-        apply(layout, dryRun: dryRun)
+        apply(layout, dryRun: dryRun, useCurrentDisplays: args.contains("--current-displays"))
     case "save":
         guard args.count >= 2 else { print(usage); exit(64) }
         try saveCurrentLayout(named: args[1])

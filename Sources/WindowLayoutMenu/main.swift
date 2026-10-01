@@ -61,6 +61,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 apply.representedObject = layout.title
                 submenu.addItem(apply)
 
+                let adapt = NSMenuItem(title: "Apply to Current Displays", action: #selector(applyToCurrentDisplays(_:)), keyEquivalent: "")
+                adapt.target = self
+                adapt.isEnabled = !isRunning
+                adapt.representedObject = layout.title
+                submenu.addItem(adapt)
+
                 let update = NSMenuItem(title: "Update from Current Windows", action: #selector(updateLayout(_:)), keyEquivalent: "")
                 update.target = self
                 update.isEnabled = !isRunning
@@ -117,6 +123,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let name = sender.representedObject as? String else { return }
         run(["save", name], successTitle: "Updated \(name)")
         rebuildMenu()
+    }
+
+    @objc private func applyToCurrentDisplays(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        run(["apply", name, "--current-displays"], successTitle: "Applied \(name) to Current Displays")
     }
 
     @objc private func addLayout() {

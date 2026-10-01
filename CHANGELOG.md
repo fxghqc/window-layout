@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add `apply --current-displays` and an **Apply to Current Displays** menu action for replacement monitors with the same screen count. Preserve known display matches, proportionally adapt windows, and leave the current arrangement and saved configuration unchanged.
+- Return a failure status when regular apply cannot match or restore displays, rather than showing a misleading success alert.
+- Refuse save/apply when no active displays are available, preventing empty layouts from replacing saved configurations while the desktop is asleep or unavailable.
+
 - Verify actual window frames after resize/move, retry boundedly on the same window, and recheck the full batch before reporting success.
 - Wait for consecutive matching display topology samples and prevent overlapping menu bar operations.
 - Report windows that remain constrained or unresponsive as failures instead of claiming the layout was applied.

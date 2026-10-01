@@ -7,6 +7,7 @@ Window Layout is a small native macOS utility that saves and restores multi-disp
 - Save the current display topology and standard application windows.
 - Restore display arrangement before moving and resizing windows.
 - Identify displays by UUID, with vendor, model, and serial fallbacks.
+- Adapt a saved layout to replacement displays with the same screen count, keeping the current arrangement.
 - Match windows by application bundle identifier and window-title similarity.
 - Use layouts from a menu bar icon or the `window-layout` CLI.
 - Update an existing layout from the current desktop.
@@ -49,6 +50,7 @@ window-layout check "Home"
 window-layout arrange "Home" --dry-run
 window-layout apply "Home" --dry-run
 window-layout apply "Home"
+window-layout apply "Office" --current-displays
 window-layout diagnose-app com.google.Chrome
 ```
 
@@ -59,6 +61,21 @@ Layouts are stored in:
 ```
 
 Set `WINDOW_LAYOUT_CONFIG` to use another configuration file.
+
+## Replacement Displays
+
+Choose **Apply to Current Displays** in a layout's menu bar submenu, or run:
+
+```sh
+window-layout apply "Office" --current-displays --dry-run
+window-layout apply "Office" --current-displays
+```
+
+This mode requires the same number of connected displays as the saved layout. Known display identities take priority; replacement displays are mapped by resolution and position. Window positions and sizes scale proportionally to the mapped current displays. The current display arrangement and the original saved configuration are not modified. With several indistinguishable replacement displays, review the dry-run mapping first.
+
+Regular **Apply** still matches the saved display identities and restores the saved arrangement. To remember the replacement setup permanently, save it under a new layout name or explicitly update the existing layout after arranging its windows.
+
+Run `bash Tests/CurrentDisplaysLive.sh /path/to/window-layout` to test replacement identities against the connected displays. It uses a private temporary configuration and dry-run apply, without moving windows or changing the display arrangement.
 
 ## Moom Migration
 
